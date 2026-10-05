@@ -1,6 +1,6 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
-import { Authenticated } from "@/components/guards/authenticated";
-import { AdminOnly } from "@/components/guards/admin-only";
+import { Authenticated } from "@/components/middleware/authenticated";
+import { AdminOnly } from "@/components/middleware/admin-only";
 import { LandingPage } from "@/pages/landing";
 import { LoginPage } from "@/pages/login";
 import { RegisterPage } from "@/pages/register";

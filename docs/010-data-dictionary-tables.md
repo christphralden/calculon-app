@@ -1,6 +1,6 @@
 # Data Dictionary — Tabular Format
 
-Source of truth: `009-data-dictionary.md` and `diagrams/20260514_erd.md`.
+Source of truth: `009-data-dictionary.md` and `diagrams/20261003_erd.md`.
 
 ---
 
@@ -152,53 +152,57 @@ Source of truth: `009-data-dictionary.md` and `diagrams/20260514_erd.md`.
 
 ---
 
-## classrooms
+## rooms
 
-| &nbsp; | **classrooms** |
+| &nbsp; | **rooms** |
 |:---:|:---|
 | PK | id |
-| &nbsp; | name |
-| &nbsp; | description |
-| &nbsp; | teacher_id |
-| &nbsp; | visibility |
-| &nbsp; | starting_elo |
-| &nbsp; | elo_cap |
+| &nbsp; | host_id |
+| &nbsp; | level_id |
+| &nbsp; | type |
+| &nbsp; | status |
 | UK | invite_code |
-| &nbsp; | is_active |
+| &nbsp; | max_players |
+| &nbsp; | started_at |
+| &nbsp; | ended_at |
 | &nbsp; | created_at |
 | &nbsp; | updated_at |
+| &nbsp; | questions |
 
 | Entity | Attribute | Data Type | NULL/NOT NULL | Description |
 |---|---|---|---|---|
-| classrooms | id | UUID | NOT NULL | Primary key; generated with `gen_random_uuid()` |
-| | name | VARCHAR(128) | NOT NULL | Classroom display name |
-| | description | TEXT | NULL | Optional classroom description |
-| | teacher_id | UUID | NOT NULL | Foreign key to `players.id`; the teacher who owns this classroom |
-| | visibility | VARCHAR(16) | NOT NULL | Access mode: `private` (invite only) or `public` |
-| | starting_elo | INTEGER | NOT NULL | ELO floor for the classroom leaderboard; defaults to `0` |
-| | elo_cap | INTEGER | NULL | ELO ceiling for the classroom leaderboard; `NULL` means no cap |
-| | invite_code | VARCHAR(16) | NOT NULL | Unique code students use to join this classroom |
-| | is_active | BOOLEAN | NOT NULL | Soft-delete flag; inactive classrooms are hidden |
-| | created_at | TIMESTAMPTZ | NOT NULL | Timestamp when the classroom was created |
-| | updated_at | TIMESTAMPTZ | NOT NULL | Timestamp of the last classroom update |
+| rooms | id | UUID | NOT NULL | Primary key; generated with `gen_random_uuid()` |
+| | host_id | UUID | NOT NULL | Foreign key to `players.id`; the player who created the room |
+| | level_id | INTEGER | NULL | Foreign key to `levels.id`; `NULL` when the room uses custom `questions` instead |
+| | type | VARCHAR(16) | NOT NULL | Room type; `pvp` only, defaults to `pvp` |
+| | status | VARCHAR(16) | NOT NULL | Lifecycle state: `creation`, `waiting`, `in_progress`, `completed`, or `cancelled` |
+| | invite_code | VARCHAR(16) | NOT NULL | Unique code players use to join this room |
+| | max_players | INTEGER | NOT NULL | Room capacity; must be between 2 and 50; defaults to `10` |
+| | started_at | TIMESTAMPTZ | NULL | Timestamp when the room transitioned to `in_progress` |
+| | ended_at | TIMESTAMPTZ | NULL | Timestamp when the room was completed or cancelled |
+| | created_at | TIMESTAMPTZ | NOT NULL | Timestamp when the room was created |
+| | updated_at | TIMESTAMPTZ | NOT NULL | Timestamp of the last room update |
+| | questions | JSONB | NULL | Custom question set for the room; `NULL` uses `level_id`'s generated questions |
 
 ---
 
-## classroom_members
+## room_members
 
-| &nbsp; | **classroom_members** |
+| &nbsp; | **room_members** |
 |:---:|:---|
-| PK | classroom_id |
+| PK | room_id |
 | PK | player_id |
-| &nbsp; | classroom_elo |
+| &nbsp; | game_session_id |
 | &nbsp; | joined_at |
+| &nbsp; | deleted_at |
 
 | Entity | Attribute | Data Type | NULL/NOT NULL | Description |
 |---|---|---|---|---|
-| classroom_members | classroom_id | UUID | NOT NULL | Foreign key to `classrooms.id`; part of composite primary key |
+| room_members | room_id | UUID | NOT NULL | Foreign key to `rooms.id`; part of composite primary key |
 | | player_id | UUID | NOT NULL | Foreign key to `players.id`; part of composite primary key |
-| | classroom_elo | INTEGER | NOT NULL | Student's ELO within this classroom; floored at `classrooms.starting_elo`, optionally capped at `classrooms.elo_cap` |
-| | joined_at | TIMESTAMPTZ | NOT NULL | Timestamp when the student joined the classroom |
+| | game_session_id | UUID | NULL | Foreign key to `game_sessions.id`; `NULL` until the player starts their session |
+| | joined_at | TIMESTAMPTZ | NOT NULL | Timestamp when the player joined the room |
+| | deleted_at | TIMESTAMPTZ | NULL | Soft-delete timestamp; `NULL` while still an active member |
 
 ---
 
@@ -222,12 +226,13 @@ Source of truth: `009-data-dictionary.md` and `diagrams/20260514_erd.md`.
 | &nbsp; | ended_at |
 | &nbsp; | client_ip |
 | &nbsp; | user_agent |
+| &nbsp; | room_id |
 
 | Entity | Attribute | Data Type | NULL/NOT NULL | Description |
 |---|---|---|---|---|
 | game_sessions | id | UUID | NOT NULL | Primary key; generated with `gen_random_uuid()` |
 | | player_id | UUID | NOT NULL | Foreign key to `players.id` |
-| | level_id | INTEGER | NOT NULL | Foreign key to `levels.id` |
+| | level_id | INTEGER | NULL | Foreign key to `levels.id`; `NULL` for room sessions using custom questions instead of a level |
 | | status | VARCHAR(16) | NOT NULL | Session state: `in_progress`, `completed`, `failed`, or `abandoned` |
 | | score | INTEGER | NOT NULL | Accumulated ELO delta earned during the session; defaults to `0` |
 | | elo_before | INTEGER | NOT NULL | Player's global ELO at the moment the session started |
@@ -241,6 +246,7 @@ Source of truth: `009-data-dictionary.md` and `diagrams/20260514_erd.md`.
 | | ended_at | TIMESTAMPTZ | NULL | Timestamp when the session ended; `NULL` while in progress |
 | | client_ip | INET | NULL | Player's IP address at session start |
 | | user_agent | TEXT | NULL | Player's browser/client user agent string |
+| | room_id | UUID | NULL | Foreign key to `rooms.id`; `NULL` for solo (non-room) sessions |
 
 ---
 

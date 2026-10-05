@@ -1,6 +1,6 @@
 # Data Dictionary
 
-Generated from migrations. Last updated: 2026-05-14.
+Generated from migrations. Last updated: 2026-10-03.
 
 **Database:** PostgreSQL 16  
 **Schemas:** `public`, `audit`  
@@ -18,8 +18,8 @@ Generated from migrations. Last updated: 2026-05-14.
 | [players](#players) | public | Player accounts and stats |
 | [levels](#levels) | public | Game level definitions |
 | [levels_unlocked](#levels_unlocked) | public | Per-player level unlock log |
-| [classrooms](#classrooms) | public | Teacher-managed classrooms |
-| [classroom_members](#classroom_members) | public | Classroom enrollment and scoped ELO |
+| [rooms](#rooms) | public | Ephemeral multiplayer groupings (PVP) |
+| [room_members](#room_members) | public | Room membership and linked game session |
 | [game_sessions](#game_sessions) | public | Individual play sessions |
 | [session_answers](#session_answers) | public | Per-answer events within a session (partitioned) |
 | [elo_history](#elo_history) | public | Append-only ELO change log (partitioned) |
@@ -62,8 +62,15 @@ Generated from migrations. Last updated: 2026-05-14.
 | `level:create` | Create game levels |
 | `level:update` | Update game levels |
 | `level:delete` | Delete game levels |
+| `room:create` | Create a room (PVP) |
+| `room:join` | Join a room via invite code |
+| `room:start` | Start a room (host only; enforced in service layer) |
+| `room:end` | End a room (host only; enforced in service layer) |
+| `room:cancel` | Cancel a room (host only; enforced in service layer) |
 | `admin:full` | Full admin access |
 | `*` | Wildcard — all permissions |
+
+> **Note:** The `classroom:*` permissions remain seeded in the table, but the `classrooms`/`classroom_members` tables were dropped in `202605190002_remove_classroom`. No migration has removed these rows — they are currently unused/orphaned.
 
 ---
 
@@ -97,7 +104,7 @@ Generated from migrations. Last updated: 2026-05-14.
 
 **Purpose:** Many-to-many join table assigning permissions to roles. Seeded at migration time.
 
-**Migration:** `202605020003_create_role_permissions`
+**Migrations:** `202605020003_create_role_permissions`, `202605100004_add_room_permissions`
 
 | Column | Type | Nullable | Default | Description |
 |---|---|---|---|---|
@@ -113,8 +120,8 @@ Generated from migrations. Last updated: 2026-05-14.
 
 | Role | Permissions |
 |---|---|
-| `student` | `player:read`, `player:update`, `session:create`, `session:update`, `classroom:join`, `classroom:leave`, `leaderboard:read` |
-| `teacher` | `player:read`, `player:update`, `session:create`, `session:update`, `classroom:create`, `classroom:update`, `classroom:delete`, `classroom:read`, `leaderboard:read` |
+| `student` | `player:read`, `player:update`, `session:create`, `session:update`, `classroom:join`, `classroom:leave`, `leaderboard:read`, `room:create`, `room:join`, `room:start`, `room:end`, `room:cancel` |
+| `teacher` | `player:read`, `player:update`, `session:create`, `session:update`, `classroom:create`, `classroom:update`, `classroom:delete`, `classroom:read`, `leaderboard:read`, `room:create`, `room:join`, `room:start`, `room:end`, `room:cancel` |
 | `admin` | `*`, `admin:full` |
 
 ---
@@ -222,65 +229,83 @@ Generated from migrations. Last updated: 2026-05-14.
 
 ---
 
-## classrooms
+## rooms
 
-**Purpose:** Teacher-managed groups of students. Controls ELO range for the classroom leaderboard via `starting_elo` (floor) and `elo_cap` (ceiling). Students join via a unique `invite_code`.
+**Purpose:** Ephemeral grouping of players for multiplayer (PVP) sessions. A room enforces a shared level, tracks lifecycle state, and is the unit for post-game leaderboard queries. Unity is unaware of rooms — it only ever receives a `game_session_id`. The `classroom`-room type and `rooms.classroom_id` were removed in `202605190002_remove_classroom`; rooms are now PVP-only.
 
-**Migration:** `202605020006_create_classrooms`
+**Migrations:** `202605100001_create_rooms`, `202605190002_remove_classroom`, `202605190002_rooms_custom_game`
 
 | Column | Type | Nullable | Default | Description |
 |---|---|---|---|---|
 | `id` | `UUID` | NO | `gen_random_uuid()` | Primary key |
-| `name` | `VARCHAR(128)` | NO | — | Classroom display name |
-| `description` | `TEXT` | YES | — | Optional description |
-| `teacher_id` | `UUID` | NO | — | FK → players.id (owning teacher) |
-| `visibility` | `VARCHAR(16)` | NO | `'private'` | `'private'` or `'public'` |
-| `starting_elo` | `INTEGER` | NO | `0` | ELO floor for classroom leaderboard |
-| `elo_cap` | `INTEGER` | YES | — | ELO ceiling; `NULL` = no cap |
+| `host_id` | `UUID` | NO | — | FK → players.id (room creator) |
+| `level_id` | `INTEGER` | YES | — | FK → levels.id; shared level for all members; `NULL` for rooms with custom questions |
+| `type` | `VARCHAR(16)` | NO | `'pvp'` | Room type (`'pvp'` only) |
+| `status` | `VARCHAR(16)` | NO | `'waiting'` | Lifecycle state (see enum below) |
 | `invite_code` | `VARCHAR(16)` | NO | — | Unique join code |
-| `is_active` | `BOOLEAN` | NO | `true` | Soft-delete flag |
+| `max_players` | `INTEGER` | NO | `10` | Capacity; must be between 2 and 50 |
+| `started_at` | `TIMESTAMPTZ` | YES | — | Set when room transitions to `in_progress` |
+| `ended_at` | `TIMESTAMPTZ` | YES | — | Set when room is completed or cancelled |
 | `created_at` | `TIMESTAMPTZ` | NO | `now()` | Creation timestamp |
 | `updated_at` | `TIMESTAMPTZ` | NO | `now()` | Last update timestamp |
+| `questions` | `JSONB` | YES | — | Custom question set for the room; `NULL` uses `level_id`'s generated questions |
+
+**Status enum:**
+
+| Value | Meaning |
+|---|---|
+| `creation` | Room is being configured (custom questions flow) |
+| `waiting` | Room is open for members to join |
+| `in_progress` | Room's sessions are active |
+| `completed` | All members finished |
+| `cancelled` | Host or cron cancelled the room |
 
 **Constraints:**
 - `PRIMARY KEY (id)`
 - `UNIQUE (invite_code)`
-- `CHECK visibility IN ('private', 'public')`
-- `CHECK elo_cap_above_floor`: `elo_cap IS NULL OR elo_cap > starting_elo`
-- `FOREIGN KEY (teacher_id) REFERENCES players(id) ON DELETE CASCADE`
+- `CHECK type IN ('pvp')`
+- `CHECK status IN ('creation', 'waiting', 'in_progress', 'completed', 'cancelled')`
+- `CHECK (max_players BETWEEN 2 AND 50)`
+- `FOREIGN KEY (host_id) REFERENCES players(id) ON DELETE CASCADE`
+- `FOREIGN KEY (level_id) REFERENCES levels(id)`
 
 **Indexes:**
 
 | Name | Columns | Notes |
 |---|---|---|
-| `idx_classrooms_teacher` | `teacher_id` | Teacher's classroom list |
-| `idx_classrooms_invite` | `invite_code` | Join-by-code lookup |
+| `idx_rooms_host` | `host_id` | Host's room list |
+| `idx_rooms_invite` | `invite_code` | Join-by-code lookup |
+| `idx_rooms_status` | `status` | Partial: `WHERE status IN ('waiting', 'in_progress')`; active room lookup |
 
 ---
 
-## classroom_members
+## room_members
 
-**Purpose:** Tracks student enrollment in classrooms. Stores a per-classroom ELO (`classroom_elo`) that is floored at `classrooms.starting_elo` and optionally capped at `classrooms.elo_cap`. This is independent of the player's global `current_elo`.
+**Purpose:** Tracks player membership in a room and links each member to their individual `game_sessions` row once they start playing. Supports soft delete for members who leave.
 
-**Migration:** `202605020007_create_classroom_members`
+**Migrations:** `202605100002_create_room_members`, `202605190001_room_members_soft_delete`
 
 | Column | Type | Nullable | Default | Description |
 |---|---|---|---|---|
-| `classroom_id` | `UUID` | NO | — | FK → classrooms.id |
+| `room_id` | `UUID` | NO | — | FK → rooms.id |
 | `player_id` | `UUID` | NO | — | FK → players.id |
-| `classroom_elo` | `INTEGER` | NO | — | Student's ELO within this classroom |
-| `joined_at` | `TIMESTAMPTZ` | NO | `now()` | Enrollment timestamp |
+| `game_session_id` | `UUID` | YES | — | FK → game_sessions.id; `NULL` until the player starts their session |
+| `joined_at` | `TIMESTAMPTZ` | NO | `now()` | Timestamp the player joined the room |
+| `deleted_at` | `TIMESTAMPTZ` | YES | — | Soft-delete timestamp; `NULL` while still an active member |
 
 **Constraints:**
-- `PRIMARY KEY (classroom_id, player_id)`
-- `FOREIGN KEY (classroom_id) REFERENCES classrooms(id) ON DELETE CASCADE`
+- `PRIMARY KEY (room_id, player_id)`
+- `FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE`
 - `FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE`
+- `FOREIGN KEY (game_session_id) REFERENCES game_sessions(id) ON DELETE SET NULL`
 
 **Indexes:**
 
 | Name | Columns | Notes |
 |---|---|---|
-| `idx_members_player` | `player_id` | Player's classroom list |
+| `idx_room_members_player` | `player_id` | Player's room list |
+| `idx_room_members_session` | `game_session_id` | Partial: `WHERE game_session_id IS NOT NULL`; session lookup |
+| `idx_room_members_active` | `room_id` | Partial: `WHERE deleted_at IS NULL`; active member lookup |
 
 ---
 
@@ -288,13 +313,13 @@ Generated from migrations. Last updated: 2026-05-14.
 
 **Purpose:** Records each play session. Captures ELO state before and after, streaks, and answer counts. Status transitions: `in_progress` → `completed` | `failed` | `abandoned`. A cron job marks stale sessions (>30 min inactive) as `abandoned`.
 
-**Migrations:** `202605020008_create_game_sessions`, `202605070002_create_admin_indexes`, `202605120001_drop_game_sessions_max_answers`
+**Migrations:** `202605020008_create_game_sessions`, `202605070002_create_admin_indexes`, `202605120001_drop_game_sessions_max_answers`, `202605100003_add_room_id_to_game_sessions`, `202605230001_nullable_level_id_game_sessions`
 
 | Column | Type | Nullable | Default | Description |
 |---|---|---|---|---|
 | `id` | `UUID` | NO | `gen_random_uuid()` | Primary key |
 | `player_id` | `UUID` | NO | — | FK → players.id |
-| `level_id` | `INTEGER` | NO | — | FK → levels.id |
+| `level_id` | `INTEGER` | YES | — | FK → levels.id; `NULL` for room sessions using custom questions instead of a level |
 | `status` | `VARCHAR(16)` | NO | `'in_progress'` | Session state (see enum below) |
 | `score` | `INTEGER` | NO | `0` | Accumulated ELO delta during session |
 | `elo_before` | `INTEGER` | NO | — | Player's global ELO at session start |
@@ -308,6 +333,7 @@ Generated from migrations. Last updated: 2026-05-14.
 | `ended_at` | `TIMESTAMPTZ` | YES | — | Session end time |
 | `client_ip` | `INET` | YES | — | Player's IP address |
 | `user_agent` | `TEXT` | YES | — | Player's user agent string |
+| `room_id` | `UUID` | YES | — | FK → rooms.id; `NULL` for solo (non-room) sessions |
 
 **Status enum:**
 
@@ -323,6 +349,7 @@ Generated from migrations. Last updated: 2026-05-14.
 - `CHECK status IN ('in_progress', 'completed', 'failed', 'abandoned')`
 - `FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE`
 - `FOREIGN KEY (level_id) REFERENCES levels(id)`
+- `FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE SET NULL`
 
 **Indexes:**
 
@@ -332,6 +359,7 @@ Generated from migrations. Last updated: 2026-05-14.
 | `idx_sessions_level` | `level_id, score DESC` | Partial: `WHERE status = 'completed'`; level leaderboard |
 | `idx_sessions_started` | `started_at DESC` | Admin pagination |
 | `idx_sessions_status_started` | `status, started_at DESC` | Admin filtering by status |
+| `idx_sessions_room` | `room_id` | Partial: `WHERE room_id IS NOT NULL`; per-room session lookup |
 
 ---
 
