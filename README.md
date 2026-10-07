@@ -1,14 +1,21 @@
-# Magic Nugger App
+# Calculon App
 
 ## Educational tower defense game for ages 6–12. Solve math equations to defend against enemies.
 
-This repo (`magic-nugger-app`) is the **web app only** — backend (Express), frontend shell (React), database, and deployment infra. The Unity game itself is built and maintained in a **separate repo**, [Calculon](https://github.com/KRook0110/MagicNagger), and is only ever consumed here as a prebuilt WebGL artifact (see [Add the Unity game build](#add-the-unity-game-build) and [Deploying to Production](#deploying-to-production)).
+## Repositories
 
-## Game Repo: [Calculon](https://github.com/KRook0110/MagicNagger)
+Calculon is split across two repositories:
+
+| Repository                   | Role                                                                                                                   | Link                                            |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
+| **calculon-app** (this repo) | Web app — Express backend, React frontend shell, PostgreSQL database, and all deployment infra (Docker, Nginx, CI/CD) | <https://github.com/christphralden/calculon-app> |
+| **Calculon**                 | Unity WebGL game — built and maintained independently, consumed here only as a prebuilt artifact                     | <https://github.com/KRook0110/Calculon>          |
+
+`calculon-app` does not contain the game's source. It only ever embeds a built WebGL export of it — manually, at `web-app/public/Calculon/`, for local development (see [Add the Unity game build](#add-the-unity-game-build)), or automatically via a published release, during deployment (see [Deploying to Production](#deploying-to-production)).
 
 ## Release Notes
 
-The Unity WebGL build is published as a **GitHub Release on this repo** (`magic-nugger-app`), not on the Calculon repo — the deploy pipeline (`UNITY_RELEASE_TAG` / `download-unity` action) pulls release assets from this repo by tag. So after a new Unity build is ready (from the Calculon repo), publish it here:
+The Unity WebGL build is published as a **GitHub Release on `calculon-app`** (not on the `Calculon` repo) — the deploy pipeline (`UNITY_RELEASE_TAG` / `download-unity` action) pulls release assets from `calculon-app` by tag. So after a new Unity build is ready (from the `Calculon` repo), publish it here:
 
 ```bash
 git tag -d <tag>
@@ -33,8 +40,8 @@ gh release create <tag> <src> --title "<title>" --notes "<notes>"
 ## Clone
 
 ```bash
-git clone https://github.com/christphralden/magic-nugger-app.git
-cd magic-nugger-app
+git clone https://github.com/christphralden/calculon-app.git
+cd calculon-app
 ```
 
 ---
@@ -104,16 +111,18 @@ cd web-app && npm run dev
 
 The game screen will not load without this step — it is not fetched automatically in local development.
 
-1. Build the WebGL export from the separate [Calculon](https://github.com/KRook0110/MagicNagger) repo.
+1. Build the WebGL export from the separate [Calculon](https://github.com/KRook0110/Calculon) repo.
 2. Place the build output at `web-app/public/Calculon/`, so that the following exist directly inside it:
-   ```
-   web-app/public/Calculon/
-   ├── index.html
-   ├── Build/
-   ├── TemplateData/
-   └── StreamingAssets/
-   ```
-   This exact path and folder name (`public/Calculon/`) is gitignored and is what the frontend's Unity bridge expects.
+
+```
+web-app/public/Calculon/
+├── index.html
+├── Build/
+├── TemplateData/
+└── StreamingAssets/
+```
+
+This exact path and folder name (`public/Calculon/`) is gitignored and is what the frontend's Unity bridge expects.
 
 In production this placement is done automatically by the deploy pipeline — see [Deploying to Production](#deploying-to-production).
 
@@ -155,7 +164,7 @@ Copy `.env.local.example` to `.env.local` for local dev. `.env.production.exampl
 
 ```
 
-magic-nugger-app/
+calculon-app/
 ├── db/
 ├── docs/
 ├── nginx/
@@ -260,7 +269,7 @@ Launch an Ubuntu 22.04 LTS `t3.micro` (or larger) with a 20GB EBS volume for Pos
 
 ### 2. Publish the Unity game build
 
-Deployment expects a GitHub Release on **this repo** containing a `calculon.tar.gz` asset, at the tag named by the `UNITY_RELEASE_TAG` variable (default `latest`). Build the game in the [Calculon](https://github.com/KRook0110/MagicNagger) repo, then publish it here with the commands in [Release Notes](#release-notes) above. The deploy pipeline downloads this release, extracts it, and places it on the server automatically — unlike local dev, you do not need to manually copy anything to the EC2 instance.
+Deployment expects a GitHub Release on **`calculon-app`** containing a `calculon.tar.gz` asset, at the tag named by the `UNITY_RELEASE_TAG` variable (default `latest`). Build the game in the [Calculon](https://github.com/KRook0110/Calculon) repo, then publish it on `calculon-app` with the commands in [Release Notes](#release-notes) above. The deploy pipeline downloads this release, extracts it, and places it on the server automatically — unlike local dev, you do not need to manually copy anything to the EC2 instance.
 
 ### 3. GitHub Secrets and Variables
 
