@@ -2,17 +2,42 @@
 
 ## Educational tower defense game for ages 6–12. Solve math equations to defend against enemies.
 
+This repo (`magic-nugger-app`) is the **web app only** — backend (Express), frontend shell (React), database, and deployment infra. The Unity game itself is built and maintained in a **separate repo**, [Calculon](https://github.com/KRook0110/MagicNagger), and is only ever consumed here as a prebuilt WebGL artifact (see [Add the Unity game build](#add-the-unity-game-build) and [Deploying to Production](#deploying-to-production)).
+
 ## Game Repo: [Calculon](https://github.com/KRook0110/MagicNagger)
 
 ## Release Notes
 
-On new [Unity Build](https://github.com/KRook0110/MagicNagger) update release
+The Unity WebGL build is published as a **GitHub Release on this repo** (`magic-nugger-app`), not on the Calculon repo — the deploy pipeline (`UNITY_RELEASE_TAG` / `download-unity` action) pulls release assets from this repo by tag. So after a new Unity build is ready (from the Calculon repo), publish it here:
 
 ```bash
 git tag -d <tag>
-git push push origin --delete <tag>
+git push origin --delete <tag>
 gh release create <tag> <src> --title "<title>" --notes "<notes>"
 ```
+
+`<src>` is the `calculon.tar.gz` produced by the Unity build. `<tag>` should match the `UNITY_RELEASE_TAG` GitHub variable used by the deploy workflow (default `latest`).
+
+---
+
+## Prerequisites
+
+- **Node.js 20+** and npm
+- **Docker** + Docker Compose v2 (for Option A below, and for all database usage)
+- **Git**
+- PostgreSQL 16 locally — only needed for Option B (no Docker)
+- For deployment: an AWS account, a registered domain, a GitHub repo with Actions enabled, and the [`gh` CLI](https://cli.github.com/) (to publish Unity releases)
+
+---
+
+## Clone
+
+```bash
+git clone https://github.com/christphralden/magic-nugger-app.git
+cd magic-nugger-app
+```
+
+---
 
 ## Quick Start
 
@@ -23,7 +48,9 @@ Run Postgres in Docker, run the server and web app locally for hot reload.
 ```bash
 # 1. Environment
 cp .env.local.example .env.local
-# Fill in: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET, APP_USER_PASSWORD, POSTGRES_PASSWORD
+# Fill in: POSTGRES_USER, POSTGRES_PASSWORD, APP_USER, APP_USER_PASSWORD,
+#          APP_RO_USER, APP_RO_PASSWORD, PARTMAN_PASSWORD, SESSION_SECRET,
+#          GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 
 # 2. Install dependencies
 npm install
@@ -60,7 +87,7 @@ Requires a local PostgreSQL 16 instance.
 ```bash
 # 1. Environment
 cp .env.local.example .env.local
-# Set POSTGRES_HOST=localhost and fill in credentials
+# Set POSTGRES_HOST=localhost and fill in the same credentials as Option A
 
 # 2. Install & migrate
 npm install
@@ -73,172 +100,54 @@ cd web-app && npm run dev
 
 ---
 
-## Entity Relationship Diagram (2026-05-06)
+### Add the Unity game build
 
-```mermaid
-erDiagram
-    permissions {
-        serial      id   PK
-        varchar     name UK
-    }
+The game screen will not load without this step — it is not fetched automatically in local development.
 
-    roles {
-        serial  id          PK
-        varchar name        UK
-        text    description
-    }
+1. Build the WebGL export from the separate [Calculon](https://github.com/KRook0110/MagicNagger) repo.
+2. Place the build output at `web-app/public/Calculon/`, so that the following exist directly inside it:
+   ```
+   web-app/public/Calculon/
+   ├── index.html
+   ├── Build/
+   ├── TemplateData/
+   └── StreamingAssets/
+   ```
+   This exact path and folder name (`public/Calculon/`) is gitignored and is what the frontend's Unity bridge expects.
 
-    role_permissions {
-        int role_id       FK
-        int permission_id FK
-    }
+In production this placement is done automatically by the deploy pipeline — see [Deploying to Production](#deploying-to-production).
 
-    players {
-        uuid        id                       PK
-        varchar     username                 UK
-        varchar     display_name
-        varchar     email                    UK
-        text        avatar_url
-        int         role_id                  FK
-        varchar     oauth_provider
-        varchar     oauth_id
-        text        password_hash
-        int         current_elo
-        int         highest_level_unlocked
-        int         total_questions_answered
-        int         total_correct
-        int         total_incorrect
-        int         longest_streak
-        timestamptz created_at
-        timestamptz updated_at
-        timestamptz last_active_at
-    }
+---
 
-    levels {
-        serial      id                  PK
-        varchar     name
-        text        description
-        int         order_index         UK
-        int         elo_min
-        int         elo_gain_correct
-        int         elo_loss_incorrect
-        int         time_limit_seconds
-        jsonb       enemy_wave_config
-        jsonb       question_gen_config
-        int         max_score
-        boolean     is_active
-        timestamptz created_at
-        timestamptz updated_at
-    }
+## Environment Variables
 
-    classrooms {
-        uuid        id           PK
-        varchar     name
-        text        description
-        uuid        teacher_id   FK
-        varchar     visibility
-        int         starting_elo
-        int         elo_cap
-        varchar     invite_code  UK
-        boolean     is_active
-        timestamptz created_at
-        timestamptz updated_at
-    }
+Copy `.env.local.example` to `.env.local` for local dev. `.env.production.example` shows the production shape (the real `.env.production` on the server is written by CI from GitHub Secrets/Variables — never committed).
 
-    classroom_members {
-        uuid        classroom_id FK
-        uuid        player_id    FK
-        int         classroom_elo
-        timestamptz joined_at
-    }
-
-    game_sessions {
-        uuid        id              PK
-        uuid        player_id       FK
-        int         level_id        FK
-        varchar     status
-        int         score
-        int         max_answers
-        int         elo_before
-        int         elo_after
-        int         elo_delta
-        int         correct_count
-        int         incorrect_count
-        int         max_streak
-        int         current_streak
-        timestamptz started_at
-        timestamptz ended_at
-        inet        client_ip
-        text        user_agent
-    }
-
-    session_answers {
-        bigint      id            PK
-        uuid        session_id    FK
-        boolean     is_correct
-        int         elo_delta
-        int         time_taken_ms
-        timestamptz answered_at
-    }
-
-    elo_history {
-        bigint      id         PK
-        uuid        player_id  FK
-        uuid        session_id FK
-        int         elo_before
-        int         elo_after
-        int         delta
-        varchar     reason
-        timestamptz created_at
-    }
-
-    session {
-        varchar     sid    PK
-        json        sess
-        timestamp   expire
-    }
-
-    audit.audit_events {
-        uuid        id          PK
-        uuid        user_id     FK
-        varchar     url
-        smallint    status_code
-        inet        ip_address
-        text        user_agent
-        jsonb       metadata
-        timestamptz created_at
-        varchar     http_method
-    }
-
-    audit.log_events {
-        uuid        id         PK
-        uuid        user_id    FK
-        varchar     event
-        varchar     level
-        jsonb       metadata
-        text        description
-        timestamptz created_at
-    }
-
-    roles            ||--|{ role_permissions    : "role_id"
-    permissions      ||--|{ role_permissions    : "permission_id"
-    roles            ||--o{ players             : "role_id"
-    players          ||--o{ classrooms          : "teacher_id"
-    players          ||--o{ classroom_members   : "player_id"
-    classrooms       ||--o{ classroom_members   : "classroom_id"
-    players          ||--o{ game_sessions       : "player_id"
-    levels           ||--o{ game_sessions       : "level_id"
-    game_sessions    ||--o{ session_answers     : "session_id"
-    players          ||--o{ elo_history         : "player_id"
-    game_sessions    |o--o{ elo_history         : "session_id"
-    players          |o--o{ audit.audit_events  : "user_id"
-    players          |o--o{ audit.log_events    : "user_id"
-
-```
-
-- `session` managed sessions added 2026-05-06.
-- `audit_events` (weekly partitioned, `audit` schema) added 2026-05-06.
-- `log_events` (weekly partitioned, `audit` schema) added 2026-05-07. Used by cron jobs and future structured logging.
+| Variable                          | Local (`.env.local`)                                     | Production                                                     | Notes                                                              |
+| ---------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `POSTGRES_USER`                   | superuser name                                              | same                                                             | Used by the migration runner and DB init scripts                  |
+| `POSTGRES_PASSWORD`               | superuser password                                          | same                                                             |                                                                     |
+| `POSTGRES_DB`                     | `magic_nugger`                                              | same                                                             |                                                                     |
+| `POSTGRES_HOST`                   | `localhost`                                                 | `magic-nugger-postgres`                                         | Docker network alias in production, not `localhost`               |
+| `APP_USER` / `APP_USER_PASSWORD`  | app DB role (SELECT/INSERT/UPDATE/DELETE)                   | same                                                             | Created by `db/init/001_users.sh` on first Postgres boot           |
+| `APP_RO_USER` / `APP_RO_PASSWORD` | read-only DB role (SELECT only)                             | same                                                             | Created by `db/init/001_users.sh`                                  |
+| `PARTMAN_PASSWORD`                | password for `partman_user`                                 | same                                                             | Created by `db/init/002_extensions.sh`; runs `pg_partman_bgw`      |
+| `DATABASE_URL`                    | set manually, e.g. `postgresql://<APP_USER>:<APP_USER_PASSWORD>@localhost:5432/magic_nugger` | not set — constructed by docker-compose at runtime from `APP_USER`/`APP_USER_PASSWORD`/`POSTGRES_DB` | |
+| `SESSION_SECRET`                  | `openssl rand -base64 32`                                   | same generation method                                           | Express session signing secret                                    |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth app credentials                     | same                                                             |                                                                     |
+| `GOOGLE_CALLBACK_URL`             | `http://localhost:3000/api/v1/auth/oauth/google/callback`   | `https://yourdomain.com/api/v1/auth/oauth/google/callback`       |                                                                     |
+| `FRONTEND_URL`                    | `http://localhost:5173`                                     | only needed if frontend/API are on different origins             |                                                                     |
+| `CORS_ORIGIN`                     | `http://localhost:5173`                                     | `https://yourdomain.com` (optional — not needed behind one nginx) |                                                                     |
+| `PORT`                            | `3000`                                                       | `3000`                                                           |                                                                     |
+| `NODE_ENV`                        | `development`                                                | `production`                                                     |                                                                     |
+| `RPM_LIMIT`                       | `3000`                                                       | `3000`                                                           | Express-level rate limit (secondary to nginx's)                   |
+| `GAME_SESSION_STALE_THRESHOLD_MS` | `1800000`                                                    | same                                                             | Used by the hourly cron session-cleanup job                       |
+| `INTERNAL_SECRET`                 | diagnostics secret                                           | same                                                             |                                                                     |
+| `DB_POOL_MAX`                     | `20`                                                         | `20`                                                             |                                                                     |
+| `DB_POOL_IDLE_TIMEOUT_MS`         | `30000`                                                      | `30000`                                                          |                                                                     |
+| `DB_POOL_CONNECTION_TIMEOUT_MS`   | `5000`                                                       | `5000`                                                           |                                                                     |
+| `DB_QUERY_TIMEOUT_MS`             | `30000`                                                      | `30000`                                                          |                                                                     |
+| `DB_SSL_MODE`                     | `prefer`                                                     | `prefer`                                                         |                                                                     |
 
 ---
 
@@ -275,7 +184,11 @@ npm run db:backup
 npm run db:restore -- db/backups/backup_20260507_020000.sql
 ```
 
-Automated weekly backups run via the `magic-nugger-cron` container (Sundays at 02:00). See [`docs/007-cron-jobs.md`](docs/007-cron-jobs.md) for cron job details.
+Automated weekly backups run via the `magic-nugger-cron` container (Sundays at 02:00) in **both** dev and production. See [`docs/007-cron-jobs.md`](docs/007-cron-jobs.md) for cron job details.
+
+### Creating a migration
+
+Migrations live under `db/migrations/apply/` and `db/migrations/rollback/`, paired by a shared timestamp prefix (`yyyymmddHHmm_description.sql`). Apply files register themselves via `_v.try_register_patch(name, deps[], description)`; rollback files call `_v.unregister_patch(name)` then undo the DDL inside `BEGIN; ... COMMIT;`. Never edit an already-applied patch — always add a new one. See [`docs/005-infra.md`](docs/005-infra.md) for the full migration system reference.
 
 ---
 
@@ -294,11 +207,207 @@ npm test
 
 ---
 
-## Environment Variables
+## Deploying to Production
 
-Copy `.env.local.example` to `.env.local` for local dev. See `.env.production.example` for the production shape (written by CI).
+### Architecture
 
-Refer to: [DEPLOYMENT.md](https://github.com/christphralden/magic-nugger-app/blob/master/DEPLOYMENT.md)
+```
+Internet
+    │
+    ▼
+┌─────────────┐
+│   Nginx     │  SSL termination, static files, rate limiting
+│  (host)     │
+└──────┬──────┘
+       │
+   ┌───┴───┐
+   │       │
+   ▼       ▼
+┌──────┐ ┌────────────┐
+│ /api │ │ / (static) │
+└──┼───┘ └────────────┘
+   │
+   ▼
+┌─────────────────┐
+│ server container│  Express 5 + Passport
+│   (Node 20)     │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐     ┌─────────────────┐
+│ postgres cont.  │◄────│  cron container │  session/room cleanup + weekly backup
+│ PostgreSQL 16   │     │  (node:alpine)  │
+└─────────────────┘     └─────────────────┘
+```
+
+Single EC2 instance. Nginx runs on the host (not in Docker) and handles TLS termination, static file serving, and reverse proxy. The web server, Postgres, and cron all run as Docker containers. All secrets and deploys are managed by CI/CD — no manual server configuration after initial setup.
+
+### Prerequisites
+
+- AWS account
+- A registered domain pointing at the EC2 instance's public IP
+- A GitHub repository with a `master` branch and Actions enabled
+
+### 1. Provision EC2
+
+Launch an Ubuntu 22.04 LTS `t3.micro` (or larger) with a 20GB EBS volume for Postgres data, and these security group rules:
+
+| Port | Source    | Purpose |
+| ---- | --------- | ------- |
+| 22   | Your IP   | SSH     |
+| 80   | 0.0.0.0/0 | HTTP    |
+| 443  | 0.0.0.0/0 | HTTPS   |
+
+### 2. Publish the Unity game build
+
+Deployment expects a GitHub Release on **this repo** containing a `calculon.tar.gz` asset, at the tag named by the `UNITY_RELEASE_TAG` variable (default `latest`). Build the game in the [Calculon](https://github.com/KRook0110/MagicNagger) repo, then publish it here with the commands in [Release Notes](#release-notes) above. The deploy pipeline downloads this release, extracts it, and places it on the server automatically — unlike local dev, you do not need to manually copy anything to the EC2 instance.
+
+### 3. GitHub Secrets and Variables
+
+Go to **GitHub → Settings → Secrets and variables → Actions**.
+
+#### Secrets
+
+| Secret                     | Description                                                                                                                                         |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EC2_HOST`                 | Public IP of your EC2                                                                                                                               |
+| `EC2_USERNAME`             | SSH username (`ubuntu` for Ubuntu AMIs)                                                                                                             |
+| `EC2_SSH_KEY`              | Private SSH key for the EC2 user                                                                                                                    |
+| `POSTGRES_USER`            | Database superuser name                                                                                                                             |
+| `POSTGRES_PASSWORD`        | Database superuser password                                                                                                                         |
+| `POSTGRES_DB`              | Database name                                                                                                                                       |
+| `APP_USER`                 | Database app user (SELECT/INSERT/UPDATE/DELETE)                                                                                                     |
+| `APP_USER_PASSWORD`        | Database app user password                                                                                                                          |
+| `APP_RO_USER`              | Database read-only user (SELECT only)                                                                                                               |
+| `APP_RO_PASSWORD`          | Database read-only user password                                                                                                                    |
+| `PARTMAN_PASSWORD`         | Password for `partman_user` — pg_partman maintenance role                                                                                           |
+| `SESSION_SECRET`           | Session secret — `openssl rand -base64 32`                                                                                                          |
+| `GOOGLE_CLIENT_ID`         | Google OAuth client ID                                                                                                                              |
+| `GOOGLE_CLIENT_SECRET`     | Google OAuth client secret                                                                                                                          |
+| `CORS_ORIGIN`              | Allowed frontend origin — only required if frontend and API are on different domains                                                               |
+| `INTERNAL_SECRET`          | Internal diagnostics secret                                                                                                                         |
+| `ENABLE_REMOTE_DEPLOYMENT` | Set to `true` to enable deploys — kill switch; omit or leave unset to disable                                                                       |
+
+#### Variables
+
+| Variable                        | Example value                  |
+| -------------------------------- | ------------------------------ |
+| `API_URL`                        | `api/v1`                       |
+| `WEB_SERVER_URL`                 | `https://youractualdomain.com` |
+| `CERTBOT_EMAIL`                  | `foo@email.com`                |
+| `DOMAIN`                         | `youractualdomain.com`         |
+| `UNITY_RELEASE_TAG`              | `latest`                       |
+| `POSTGRES_HOST`                  | `magic-nugger-postgres`        |
+| `PORT`                           | `3000`                         |
+| `RPM_LIMIT`                      | `3000`                         |
+| `DB_POOL_MAX`                    | `20`                           |
+| `DB_POOL_IDLE_TIMEOUT_MS`        | `30000`                        |
+| `DB_POOL_CONNECTION_TIMEOUT_MS`  | `5000`                         |
+| `DB_QUERY_TIMEOUT_MS`            | `30000`                        |
+| `DB_SSL_MODE`                    | `prefer`                       |
+| `GAME_SESSION_RESUME_WINDOW_MS`  | `1800000`                      |
+
+Also create a `production` environment under **GitHub → Settings → Environments** to gate the deploy workflow with required reviewers.
+
+### 4. SSL (Certbot)
+
+The `configure-server` composite action re-runs Certbot automatically whenever the `DOMAIN` variable changes. Manual alternative:
+
+```bash
+sudo certbot --nginx -d youractualdomain.com
+sudo certbot renew --dry-run   # verify auto-renewal
+```
+
+### 5. Deploy
+
+Push to `master` (or run the `Deploy` workflow manually). The pipeline runs these steps in order:
+
+1. **Validate secrets** — fails fast if `SESSION_SECRET` or `POSTGRES_PASSWORD` are empty
+2. **Configure SSH** — sets up the runner to reach GitHub over `ssh.github.com:443`
+3. **Bootstrap** — one-time EC2 setup (idempotent): installs Docker, nginx, Certbot, Node 20; skipped on later runs
+4. **Pull code** — clones to `/magic-nugger` on first run, otherwise `git fetch && git reset --hard origin/master`
+5. **Write env** — writes `/magic-nugger/.env` from GitHub Secrets/Variables, `chmod 600`
+6. **Configure server** — nginx + Certbot config, re-applied if `DOMAIN` changed
+7. **Download Unity build** — downloads the `calculon.tar.gz` release from this repo, extracts it, computes a checksum, and SCPs the extracted game directory straight to `/var/www/magic-nugger/web-app/`
+8. **Deploy frontend** — `npm ci && npm run build` on the server, patches `dist/config.js` placeholders (`__WEB_SERVER_URL__`, `__API_URL__`, `__UNITY_CHECKSUM__`) via `sed`, then `rsync`s `dist/` into the nginx static root (excluding the Unity directory so it isn't wiped), and reloads nginx
+9. **Deploy server** — `docker compose build` + `up -d` for both `magic-nugger-web-server` and `magic-nugger-cron`; database migrations run automatically on server boot
+10. **Health check** — polls `http://127.0.0.1:3000/health` up to 30 times (~60s); fails the pipeline and dumps logs if the server never comes up
+11. **Cleanup** — `docker image prune -f`
+
+### 6. Database Migrations
+
+Migrations run automatically when the server container starts. To run manually:
+
+```bash
+ssh ubuntu@<EC2_IP>
+cd /magic-nugger && npm run db:migrate
+```
+
+If a migration fails, the container exits — fix the patch and restart:
+
+```bash
+docker compose restart magic-nugger-web-server
+```
+
+### 7. Rollback
+
+**Application code:**
+
+```bash
+ssh ubuntu@<EC2_IP>
+cd /magic-nugger
+git log --oneline -5
+git reset --hard <commit-hash>
+
+cd web-app && npm ci && npm run build
+sudo rsync -a --delete /magic-nugger/web-app/dist/ /var/www/magic-nugger/web-app/
+sudo nginx -s reload
+
+cd /magic-nugger
+docker compose build magic-nugger-web-server
+docker compose up -d magic-nugger-web-server
+```
+
+**Database:**
+
+```bash
+cd /magic-nugger && npm run db:rollback
+docker compose restart magic-nugger-web-server
+```
+
+Restore from a dump if needed:
+
+```bash
+docker exec -i magic-nugger-postgres psql -U postgres magic_nugger < backup.sql
+```
+
+### 8. Backup
+
+The `magic-nugger-cron` container runs in **both** dev and production (it is part of `docker-compose.yml` and is started by the deploy pipeline alongside the web server). It runs a weekly `pg_dump` every Sunday at 02:00, writing dumps to `db/backups/` on the host, logged to `audit.log_events` (`event = 'cron:backup'`).
+
+For on-demand snapshots:
+
+```bash
+npm run db:backup                                         # → db/backups/backup_YYYYMMDD_HHMMSS.sql
+npm run db:restore -- db/backups/backup_20260507_020000.sql
+```
+
+If you'd rather ship dumps off the instance, add a host crontab entry instead of (or in addition to) the container job:
+
+```bash
+0 3 * * 0 docker exec magic-nugger-postgres pg_dump -U postgres magic_nugger | aws s3 cp - s3://your-bucket/magic-nugger-$(date +\%Y\%m\%d).sql
+```
+
+See [`docs/007-cron-jobs.md`](docs/007-cron-jobs.md) for full cron job documentation.
+
+### 9. Monitoring
+
+```bash
+docker compose ps
+docker compose logs -f magic-nugger-web-server
+sudo tail -f /var/log/nginx/access.log
+sudo tail -f /var/log/nginx/error.log
+```
 
 ---
 
