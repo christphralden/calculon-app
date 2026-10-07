@@ -1,5 +1,7 @@
 # Calculon App
 
+**English** | [Bahasa Indonesia](README.id.md)
+
 ## Educational tower defense game for ages 6–12. Solve math equations to defend against enemies.
 
 ## Repositories

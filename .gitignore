@@ -57,3 +57,5 @@ shared/src/**/*.d.ts
 *.zip
 
 *.pdf
+
+scripts/
